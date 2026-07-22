@@ -1,6 +1,7 @@
 {
   "name": "project",
   "version": "1.0.0",
+  "type" : "module",
   "description": "> WIP — A unified REST API that abstracts DeFi protocols behind a > single endpoint using an adapter pattern. Currently supports > Uniswap V3 and Aave V3, with the adapter interface designed to > extend to any protocol without changing the API surface.",
   "main": "index.js",
   "scripts": {
@@ -21,5 +22,8 @@
   "homepage": "https://github.com/bedupako12mas/De-fi-Unified-API#readme",
   "devDependencies": {
     "tsx": "^4.23.1"
+  },
+  "dependencies": {
+    "fastify": "^5.10.0"
   }
 }
