@@ -102,6 +102,7 @@ action, network, and required params without reading documentation.
 | GET    | /api/v1/schema      | 🚧     | Full capability map                |
 | GET    | /api/v1/history     | 🚧     | Recent request log (?limit=N)      |
 | GET    | /health             | 🚧     | Server liveness check              |
+| GET    | /health/ready       | 🚧     | Readiness check (Postgres + Alchemy) |
 
 ---
 
@@ -143,6 +144,12 @@ action, network, and required params without reading documentation.
 ---
 
 ## Design Decisions
+
+**Two health endpoints** — `/health` is a liveness check (process alive, no
+dependencies checked — used by pm2 to decide whether to restart). `/health/ready`
+is a readiness check (actually pings Postgres and Alchemy — used by nginx to
+decide whether to route traffic). If Alchemy is down, restarting the process
+does not fix it — readiness stops traffic without killing the instance.
 
 **Single POST endpoint** — protocol is an implementation detail, not part of
 the URL. Changing protocol is changing one field in the body, not the URL.
@@ -269,18 +276,52 @@ Measures p99 latency, throughput, and cache effectiveness under concurrent load.
 
 ---
 
-## Roadmap
+## Development Plan
 
-### Planned extensions
-- [ ] Uniswap V3 exact output quote
-- [ ] Aave V3 rates, positions, reserves list
-- [ ] Postgres request logging and /history
-- [ ] Remaining endpoints (/schema, /protocols, /networks, /health)
-- [ ] Vitest integration tests
-- [ ] autocannon stress tests
-- [ ] DigitalOcean deployment
+### Phase 1 — Uniswap foundation
+- [x] Live Uniswap V3 quote from QuoterV2 on Ethereum mainnet
+- [ ] Error handling (AppError, layered errors, validateParams)
+- [ ] Adapter pattern refactor (transports, adapters, routes)
 
-### Future
+### Deploy v1 — live Uniswap quote on DigitalOcean
+> Goal: real amountOut from a curl to the Droplet URL. Validates the full
+> production path: client → server → viem → Alchemy → Ethereum mainnet.
+
+### Phase 2 — Persistence and history
+- [ ] Postgres + Docker setup (schema, db client)
+- [ ] Request logging + GET /api/v1/history
+
+### Deploy v2 — Postgres on Droplet
+> Goal: /history returns real logged requests from the live server.
+> Validates self-managed Postgres running on the Droplet.
+
+### Phase 3 — Complete API surface
+- [ ] GET /health (liveness)
+- [ ] GET /health/ready (Postgres + Alchemy readiness)
+- [ ] GET /api/v1/protocols
+- [ ] GET /api/v1/networks
+- [ ] GET /api/v1/schema
+
+### Deploy v3 — all endpoints live
+> Goal: /schema returns full capability map. /health/ready confirms all
+> dependencies healthy. Full API surface accessible from the live URL.
+
+### Phase 4 — Testing
+- [ ] Vitest integration tests (transport, adapter, server, error)
+- [ ] autocannon stress tests (p99 latency, cache effectiveness)
+
+### Phase 5 — Aave V3 adapter
+- [ ] pool.getReserveData (asset rates)
+- [ ] pool.getUserAccountData (user position)
+- [ ] pool.getReservesList (all assets)
+
+### Deploy v4 — Aave live alongside Uniswap
+> Goal: both protocols return real mainnet data from the live server.
+> /schema shows both protocols. Tests pass against live deployment.
+
+---
+
+## Future Extensions
 - [ ] Execute action (unsigned transaction calldata — client signs)
 - [ ] Uniswap V3 multi-hop quotes (exactInput, exactOutput)
 - [ ] Uniswap V4 adapter
