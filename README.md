@@ -1,332 +1,262 @@
 # DeFi Unified API
 
-> A unified REST API that abstracts DeFi protocol complexity behind a single
-> endpoint using an adapter pattern. One envelope, any protocol, any supported
-> chain — the SDK complexity is entirely hidden from the caller.
+> A unified read-only REST API that abstracts DeFi protocol complexity behind
+> a single URL pattern. One request shape, any supported protocol, any supported
+> chain — no ABI knowledge, no RPC setup, no BigInt handling required.
+
+**Live:** `http://64.227.176.137:3000`
+
+---
+
+## URL Pattern
+
+```
+GET /api/v1/{protocol}/{network}/{contract}/{function}?params
+```
+
+Mirrors the EVM deployment structure exactly — protocol contains contracts,
+contracts contain functions. Adding a protocol is one file and one registry line.
 
 ---
 
 ## Architecture
 
 ```
-Client (curl / Postman)
-        │
-        │  POST /api/v1/query  { protocol, action, network, params }
-        ▼
-┌─────────────────────────────────────────────────────┐
-│  Server (Fastify)                                   │
-│  validates envelope → dispatches to adapter         │
-└──────────────────────────┬──────────────────────────┘
-                           │
-              ┌────────────▼────────────┐
-              │  Adapter Registry       │
-              │  protocol → adapter     │
-              └────────────┬────────────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         ▼                                   ▼
-┌─────────────────┐                 ┌─────────────────┐
-│ UniswapV3Adapter│                 │  AaveV3Adapter  │
-│ quoter.*        │                 │  pool.*         │
-└────────┬────────┘                 └────────┬────────┘
-         │                                   │
-         └─────────────┬─────────────────────┘
-                       │
-              ┌────────▼────────┐
-              │  Cache (TTL)    │
-              │  hit → return   │
-              │  miss → continue│
-              └────────┬────────┘
-                       │
-              ┌────────▼────────┐
-              │  Transport      │
-              │  getTransport() │
-              └────────┬────────┘
-                       │
-              ┌────────▼────────┐
-              │  viem client    │
-              │  eth_call       │
-              └────────┬────────┘
-                       │
-              ┌────────▼────────┐
-              │  Alchemy / node │
-              │  Ethereum       │
-              └─────────────────┘
-                       │
-        ┌──────────────▼──────────────┐
-        │  Postgres (fire-and-forget) │
-        │  logs every request         │
-        └─────────────────────────────┘
+GET /api/v1/uniswap-v3/ethereum-mainnet/QuoterV2/quoteExactInputSingle
+        |
+        v
+AdapterRegistry  protocol -> UniswapV3Adapter
+        |
+        v
+UniswapV3Adapter  contract -> UniswapV3QuoterV2
+        |
+        v
+BaseContract.execute()
+  validates params against schema
+  dispatches to method by name
+        |
+        v
+UniswapV3QuoterV2.quoteExactInputSingle()
+  getTransport("ethereum-mainnet")  <- singleton viem client
+  client.simulateContract(address, abi, params)
+  converts bigint -> string, returns clean JSON
+        |
+        v
+{ "data": { "amountOut": "1872334251", ... } }
 ```
 
 ---
 
 ## Components
 
-**Server** — Fastify handles HTTP, validates the envelope shape, dispatches
-to the adapter registry. Knows nothing about protocols or chains.
+**Server (Fastify)** — receives requests, dispatches to adapter registry,
+formats all errors into a consistent envelope. Knows nothing about protocols.
 
-**Adapter System** — each adapter implements a common interface with an open
-action string. Adding a protocol is one file and one registry line. Each adapter
-declares its supported actions and networks, which auto-populates `/schema`.
+**Transport Registry** — one singleton viem PublicClient per network, created
+once at startup, shared across all adapters. Adding a chain is one config entry.
 
-**Transport System** — `getTransport(network)` returns a shared viem client
-for the requested chain. One connection pool per chain, shared across all
-adapters. Adding a new chain is one transport file and one registry entry.
+**BaseAdapter** — abstract class providing contract registration and dispatch.
+Concrete subclasses register their contracts in the constructor.
 
-**Cache** — in-memory TTL Map. Checked before every chain read. Rates cached
-30s, quotes cached 10s. Eliminates redundant Alchemy calls under concurrent load.
+**BaseContract** — abstract class providing param validation and dynamic
+method dispatch. Concrete subclasses declare schemas and implement methods.
 
-**Error Handling** — `AppError` class with `code`, `message`, `layer`, and
-`cause` fields. Each layer wraps errors from the layer below. Caller always
-receives a consistent error shape regardless of where the failure occurred.
-
-**Database** — Postgres with JSONB `params` and `response` columns. Every
-request logged with protocol, action, network, status, and duration. One table
-handles all protocols — no schema migrations when adding new ones.
-Index on `(protocol, action, network, created_at)` for efficient time-range queries.
-
-**Schema and Discovery** — `/schema` auto-generated from each adapter's declared
-action schema. Developers hit `/schema` to discover every supported protocol,
-action, network, and required params without reading documentation.
+**Error Handling** — AppError hierarchy with `code`, `message`, `layer`, and
+`cause`. Each layer catches errors from below and wraps them. Consistent shape
+regardless of where the failure occurred.
 
 ---
 
 ## Endpoints
 
-| Method | URL                 | Status | Description                        |
-|--------|---------------------|--------|------------------------------------|
-| POST   | /api/v1/query       | ✅     | Query a protocol                   |
-| GET    | /api/v1/protocols   | 🚧     | List registered protocols          |
-| GET    | /api/v1/networks    | 🚧     | List supported networks            |
-| GET    | /api/v1/schema      | 🚧     | Full capability map                |
-| GET    | /api/v1/history     | 🚧     | Recent request log (?limit=N)      |
-| GET    | /health             | 🚧     | Server liveness check              |
-| GET    | /health/ready       | 🚧     | Readiness check (Postgres + Alchemy) |
+| Method | URL | Status | Description |
+|--------|-----|--------|-------------|
+| GET | /api/v1/:protocol/:network/:contract/:fn | ✅ | Execute a read query |
+| GET | /api/v1/protocols | ✅ | List registered protocols |
+| GET | /api/v1/networks | ✅ | List supported networks |
+| GET | /api/v1/schema | ✅ | Full capability map |
+| GET | /api/v1/history | 🚧 | Request log (needs Postgres) |
+| GET | /health | ✅ | Server liveness |
+| GET | /health/ready | 🚧 | Readiness check (Postgres + Alchemy) |
 
 ---
 
-## Supported Actions
+## Supported Functions
 
-| Protocol   | Action                   | Status | Description                    |
-|------------|--------------------------|--------|--------------------------------|
-| uniswap-v3 | quoter.exactInputSingle  | ✅     | Single pool exact input quote  |
-| uniswap-v3 | quoter.exactOutputSingle | 🚧     | Single pool exact output quote |
-| aave-v3    | pool.getReserveData      | 🚧     | Asset supply and borrow rates  |
-| aave-v3    | pool.getUserAccountData  | 🚧     | User position summary          |
-| aave-v3    | pool.getReservesList     | 🚧     | All supported assets           |
+### Uniswap V3 — QuoterV2
 
----
+| Function | Required Params | Returns |
+|----------|----------------|---------|
+| quoteExactInputSingle | tokenIn, tokenOut, fee, amountIn | amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate |
+| quoteExactOutputSingle | tokenIn, tokenOut, fee, amountOut | amountIn, sqrtPriceX96After, initializedTicksCrossed, gasEstimate |
 
-## Request Envelope
+### Aave V3 — Pool (planned)
 
-```json
-{
-  "protocol": "uniswap-v3",
-  "action":   "quoter.exactInputSingle",
-  "network":  "ethereum-mainnet",
-  "params": {
-    "tokenIn":  "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    "tokenOut": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    "fee":      3000,
-    "amountIn": "1000000000000000000"
-  }
-}
-```
-
-## Response Envelopes
-
-```json
-{ "data":  { "amountOut": "1906857562" } }
-{ "error": { "code": "CHAIN_ERROR", "message": "...", "layer": "chain", "cause": "..." } }
-```
-
----
-
-## Design Decisions
-
-**Two health endpoints** — `/health` is a liveness check (process alive, no
-dependencies checked — used by pm2 to decide whether to restart). `/health/ready`
-is a readiness check (actually pings Postgres and Alchemy — used by nginx to
-decide whether to route traffic). If Alchemy is down, restarting the process
-does not fix it — readiness stops traffic without killing the instance.
-
-**Single POST endpoint** — protocol is an implementation detail, not part of
-the URL. Changing protocol is changing one field in the body, not the URL.
-Trade-off: POST is not cacheable by HTTP proxies — acceptable at this scale.
-
-**Open action string** — actions are not a fixed enum. Each adapter declares
-what it supports via a schema object. Adding a new action to an adapter requires
-zero changes to the HTTP layer or registry.
-
-**Transport factory** — adapters call `getTransport(network)` instead of
-creating their own clients. One connection pool per chain shared across all
-adapters. Adding Solana is one transport file — no adapter changes.
-
-**JSONB for params and response** — different protocols have different param
-shapes. JSONB handles all of them in one table without schema migrations.
-Index on `(protocol, action, network, created_at)` makes time-range queries fast.
-
-**Layered error codes** — every error has a `layer` field identifying which
-component failed. Caller knows immediately whether to look at their params
-(adapter layer) or the chain (chain layer).
-
-**simulateContract for Uniswap** — QuoterV2 is marked `nonpayable` not `view`
-because it transiently modifies pool state to compute price impact. `readContract`
-refuses non-view functions. `simulateContract` calls via `eth_call` — state
-changes are discarded, result is returned cleanly.
-
----
-
-## Setup
-
-**Requirements:** Node 20+, Docker, an Alchemy API key
-
-```bash
-# 1. clone and install
-git clone <repo-url>
-cd Project
-npm install
-
-# 2. configure environment
-cp .env.example .env
-# add your ETH_RPC_URL and DATABASE_URL to .env
-
-# 3. start Postgres
-docker compose up -d
-
-# 4. apply schema
-psql $DATABASE_URL -f src/db/schema.sql
-
-# 5. start dev server
-npm run dev
-```
+| Function | Required Params | Returns |
+|----------|----------------|---------|
+| getReserveData | asset | supplyApy, variableBorrowApy, aTokenAddress |
+| getUserAccountData | user | totalCollateralUsd, totalDebtUsd, healthFactor |
+| getReservesList | none | array of asset addresses |
 
 ---
 
 ## Curl Examples
 
-**Uniswap V3 — exact input quote (1 WETH → USDC)**
+**Uniswap V3 — exact input quote (1 WETH -> USDC)**
 ```bash
-curl -X POST http://localhost:3000/api/v1/query \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "protocol": "uniswap-v3",
-    "action":   "quoter.exactInputSingle",
-    "network":  "ethereum-mainnet",
-    "params": {
-      "tokenIn":  "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-      "tokenOut": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-      "fee":      3000,
-      "amountIn": "1000000000000000000"
-    }
-  }'
+curl -s "http://64.227.176.137:3000/api/v1/uniswap-v3/ethereum-mainnet/QuoterV2/quoteExactInputSingle?tokenIn=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&tokenOut=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&fee=3000&amountIn=1000000000000000000"
 ```
 
-**List protocols**
+**Uniswap V3 — exact output quote (get exactly 1000 USDC)**
 ```bash
-curl http://localhost:3000/api/v1/protocols
+curl -s "http://64.227.176.137:3000/api/v1/uniswap-v3/ethereum-mainnet/QuoterV2/quoteExactOutputSingle?tokenIn=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&tokenOut=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&fee=3000&amountOut=1000000000"
 ```
 
-**Full schema**
+**Schema — discover all supported protocols, contracts, functions**
 ```bash
-curl http://localhost:3000/api/v1/schema
+curl -s http://64.227.176.137:3000/api/v1/schema
 ```
 
-**Request history**
+**Protocols**
 ```bash
-curl http://localhost:3000/api/v1/history?limit=10
+curl -s http://64.227.176.137:3000/api/v1/protocols
 ```
 
-**Health check**
+**Networks**
 ```bash
-curl http://localhost:3000/health
+curl -s http://64.227.176.137:3000/api/v1/networks
+```
+
+**Health**
+```bash
+curl -s http://64.227.176.137:3000/health
+```
+
+**Error — unknown protocol**
+```bash
+curl -s "http://64.227.176.137:3000/api/v1/unknown/ethereum-mainnet/QuoterV2/quoteExactInputSingle"
+```
+
+**Error — missing params**
+```bash
+curl -s "http://64.227.176.137:3000/api/v1/uniswap-v3/ethereum-mainnet/QuoterV2/quoteExactInputSingle?tokenIn=0xC02..."
 ```
 
 ---
 
-## Testing
+## Response Shape
 
-**Unit and integration tests (Vitest)**
-```bash
-npm test
+**Success:**
+```json
+{
+  "data": {
+    "amountOut":               "1872334251",
+    "sqrtPriceX96After":       "1828275798781487584961640110738330",
+    "initializedTicksCrossed": "0",
+    "gasEstimate":             "98696"
+  }
+}
 ```
 
-Covers: transport connectivity, adapter return shapes, all endpoints,
-all error codes, error propagation across layers.
-
-**Stress tests (autocannon)**
-```bash
-npm run stress
+**Error:**
+```json
+{
+  "error": {
+    "code":    "INVALID_PARAMS",
+    "message": "missing required params: tokenOut, fee, amountIn",
+    "layer":   "adapter"
+  }
+}
 ```
 
-Measures p99 latency, throughput, and cache effectiveness under concurrent load.
+---
+
+## Key Design Decisions
+
+**Protocol -> Contract -> Function URL** — mirrors EVM deployment structure.
+Same function name on different contracts never collides. Self-documenting URLs.
+
+**1:1 function naming** — action names match Solidity function names exactly.
+Target audience (DeFi developers) already knows the function names. No
+translation layer needed.
+
+**Read-only scope** — every call uses eth_call. No private keys, no gas, no
+transaction risk. Safe to expose publicly.
+
+**Singleton transport** — one viem PublicClient per network, shared via Node.js
+module cache. One connection pool handles all concurrent requests to that chain.
+
+**BaseAdapter + BaseContract** — abstract classes with registration pattern.
+Each concrete class registers children in constructor. Dynamic dispatch uses
+method names directly — no separate dispatch map.
+
+**Schema separate from implementation** — QuoterV2.schema.ts declares params,
+QuoterV2.ts implements methods. Different reasons to change, different files.
+
+**Startup validation** — validateRegistry() verifies every schema entry has a
+corresponding method before the server accepts requests. Schema/method mismatches
+caught at startup, never at runtime.
+
+**Layered errors** — layer field tells caller where the failure occurred:
+server (bad request), adapter (bad params), transport (chain error).
+
+---
+
+## Setup (Local)
+
+**Requirements:** Node 20+, an Alchemy API key
+
+```bash
+git clone https://github.com/bedupako12mas/De-fi-Unified-API.git
+cd De-fi-Unified-API
+npm install
+cp .env.example .env
+# add ETH_RPC_URL to .env
+npm run dev
+```
 
 ---
 
 ## Stack
 
-- **TypeScript + Fastify** — HTTP server and routing
+- **TypeScript + Fastify** — HTTP server
 - **viem** — Ethereum on-chain reads via eth_call
-- **PostgreSQL 16** — JSONB request logging
-- **Docker Compose** — local Postgres
-- **DigitalOcean** — self-managed deployment
-- **Vitest** — unit and integration tests
-- **autocannon** — HTTP stress testing
+- **DigitalOcean Droplet** — self-managed deployment
+- **pm2** — process management and auto-restart
 
 ---
 
 ## Development Plan
 
-### Phase 1 — Uniswap foundation
-- [x] Live Uniswap V3 quote from QuoterV2 on Ethereum mainnet
-- [ ] Error handling (AppError, layered errors, validateParams)
-- [ ] Adapter pattern refactor (transports, adapters, routes)
+### Phase 1 — Uniswap V3 foundation
+- [x] Adapter pattern (BaseAdapter, BaseContract, transport singleton)
+- [x] UniswapV3 QuoterV2 — quoteExactInputSingle, quoteExactOutputSingle
+- [x] Error handling (AppError hierarchy, layered errors)
+- [x] All discovery endpoints (/schema, /protocols, /networks)
+- [x] Deploy v1 — live on DigitalOcean
 
-### Deploy v1 — live Uniswap quote on DigitalOcean
-> Goal: real amountOut from a curl to the Droplet URL. Validates the full
-> production path: client → server → viem → Alchemy → Ethereum mainnet.
-
-### Phase 2 — Persistence and history
-- [ ] Postgres + Docker setup (schema, db client)
+### Phase 2 — Persistence
+- [ ] Postgres setup (Docker local, native on Droplet)
 - [ ] Request logging + GET /api/v1/history
+- [ ] Deploy v2
 
-### Deploy v2 — Postgres on Droplet
-> Goal: /history returns real logged requests from the live server.
-> Validates self-managed Postgres running on the Droplet.
-
-### Phase 3 — Complete API surface
-- [ ] GET /health (liveness)
-- [ ] GET /health/ready (Postgres + Alchemy readiness)
-- [ ] GET /api/v1/protocols
-- [ ] GET /api/v1/networks
-- [ ] GET /api/v1/schema
-
-### Deploy v3 — all endpoints live
-> Goal: /schema returns full capability map. /health/ready confirms all
-> dependencies healthy. Full API surface accessible from the live URL.
+### Phase 3 — Aave V3 adapter
+- [ ] AaveV3Pool — getReserveData, getUserAccountData, getReservesList
+- [ ] Deploy v3
 
 ### Phase 4 — Testing
-- [ ] Vitest integration tests (transport, adapter, server, error)
-- [ ] autocannon stress tests (p99 latency, cache effectiveness)
-
-### Phase 5 — Aave V3 adapter
-- [ ] pool.getReserveData (asset rates)
-- [ ] pool.getUserAccountData (user position)
-- [ ] pool.getReservesList (all assets)
-
-### Deploy v4 — Aave live alongside Uniswap
-> Goal: both protocols return real mainnet data from the live server.
-> /schema shows both protocols. Tests pass against live deployment.
+- [ ] Vitest integration tests
+- [ ] autocannon stress tests
 
 ---
 
 ## Future Extensions
-- [ ] Execute action (unsigned transaction calldata — client signs)
-- [ ] Uniswap V3 multi-hop quotes (exactInput, exactOutput)
+- [ ] Uniswap V3 multi-hop quotes (quoteExactInput, quoteExactOutput)
+- [ ] Aave V3 additional read functions
 - [ ] Uniswap V4 adapter
-- [ ] Additional Aave V3 functions
 - [ ] Solana chain support (transport + Orca adapter)
-- [ ] Redis cache (replace in-memory Map for multi-instance deployments)
+- [ ] Additional EVM networks (Arbitrum, Polygon, Base)
+- [ ] In-memory TTL cache (reduce Alchemy calls under load)
+- [ ] Redis cache (multi-instance deployments)
 - [ ] Self-managed Ethereum node (replace Alchemy)
-- [ ] Smart order routing across multiple pools
+- [ ] /health/ready endpoint (Postgres + Alchemy readiness)
