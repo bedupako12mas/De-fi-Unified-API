@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import { getAdapter, listProtocols, buildSchema } from '../adapters/registry.js'
 import { listNetworks }                           from '../transports/index.js'
 import { AppError, ServerError }                  from '../errors.js'
+import { db }                                     from '../db/client.js'
 
 export const queryPlugin: FastifyPluginAsync = async (engine) => {
 
@@ -11,6 +12,10 @@ export const queryPlugin: FastifyPluginAsync = async (engine) => {
   }>('/api/v1/:protocol/:network/:contract/:fn', async (request, reply) => {
     const { protocol, network, contract, fn } = request.params
     const params = request.query as Record<string, unknown>
+    const start  = Date.now()
+
+    let status   = 200
+    let response: unknown
 
     try {
       const adapter = getAdapter(protocol)
@@ -25,15 +30,30 @@ export const queryPlugin: FastifyPluginAsync = async (engine) => {
       const contractHandler = adapter.getContract(contract)
       const result          = await contractHandler.execute(fn, network, params)
 
-      return { data: result }
+      response = { data: result }
+      return response
 
     } catch (err) {
       if (err instanceof AppError) {
-        reply.code(err.statusCode)
-        return err.toJSON()
+        status   = err.statusCode
+        response = err.toJSON()
+        reply.code(status)
+        return response
       }
+      status   = 500
+      response = new ServerError('INTERNAL_ERROR', 'unexpected error', err).toJSON()
       reply.code(500)
-      return new ServerError('INTERNAL_ERROR', 'unexpected error', err).toJSON()
+      return response
+
+    } finally {
+      db.query(
+        `INSERT INTO api_requests
+         (protocol, network, contract, fn, params, response, status, duration_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [protocol, network, contract, fn,
+         JSON.stringify(params), JSON.stringify(response),
+         status, Date.now() - start]
+      ).catch(err => engine.log.error({ err }, 'DB log failed'))
     }
   })
 
@@ -51,7 +71,18 @@ export const queryPlugin: FastifyPluginAsync = async (engine) => {
     data: buildSchema()
   }))
 
-  engine.get('/api/v1/history', async () => ({
-    data: { history: [] }
-  }))
+  engine.get<{
+    Querystring: { limit?: string }
+  }>('/api/v1/history', async (request) => {
+    const limit = Math.min(parseInt(request.query.limit ?? '50'), 100)
+    const { rows } = await db.query(
+      `SELECT id, protocol, network, contract, fn, params, response,
+              status, duration_ms, created_at
+       FROM api_requests
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    )
+    return { data: { history: rows } }
+  })
 }
