@@ -1,12 +1,15 @@
 {
-  "name": "project",
+  "name": "defi-unified-api",
   "version": "1.0.0",
   "type": "module",
-  "description": "> WIP — A unified REST API that abstracts DeFi protocols behind a > single endpoint using an adapter pattern. Currently supports > Uniswap V3 and Aave V3, with the adapter interface designed to > extend to any protocol without changing the API surface.",
-  "main": "index.js",
+  "description": "A unified REST API that abstracts DeFi protocols behind a single endpoint using an adapter pattern. Supports Uniswap V3 and Aave V3; the adapter interface extends to any protocol without changing the API surface.",
+  "main": "dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
