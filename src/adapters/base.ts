@@ -25,7 +25,7 @@ export abstract class BaseContract {
       `${this.constructor.name} does not have function ${fn}`
     )
 
-    validateParams(params, schema.required ?? [])
+    validateParams(params, schema)
 
     const method = (this as any)[fn]
     if (typeof method !== 'function') throw new AdapterError(

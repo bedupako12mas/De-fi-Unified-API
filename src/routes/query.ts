@@ -6,10 +6,25 @@ import { db }                                     from '../db/client.js'
 
 export const queryPlugin: FastifyPluginAsync = async (engine) => {
 
+  const identifierParam = { type: 'string', pattern: '^[a-zA-Z0-9_-]+$' }
+
   engine.get<{
     Params:      { protocol: string; network: string; contract: string; fn: string }
     Querystring: Record<string, string>
-  }>('/api/v1/:protocol/:network/:contract/:fn', async (request, reply) => {
+  }>('/api/v1/:protocol/:network/:contract/:fn', {
+    schema: {
+      params: {
+        type:       'object',
+        properties: {
+          protocol: identifierParam,
+          network:  identifierParam,
+          contract: identifierParam,
+          fn:       identifierParam
+        },
+        required: ['protocol', 'network', 'contract', 'fn']
+      }
+    }
+  }, async (request, reply) => {
     const { protocol, network, contract, fn } = request.params
     const params = request.query as Record<string, unknown>
     const start  = Date.now()
@@ -72,9 +87,18 @@ export const queryPlugin: FastifyPluginAsync = async (engine) => {
   }))
 
   engine.get<{
-    Querystring: { limit?: string }
-  }>('/api/v1/history', async (request) => {
-    const limit = Math.min(parseInt(request.query.limit ?? '50'), 100)
+    Querystring: { limit: number }
+  }>('/api/v1/history', {
+    schema: {
+      querystring: {
+        type:       'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 }
+        }
+      }
+    }
+  }, async (request) => {
+    const limit = request.query.limit
     const { rows } = await db.query(
       `SELECT id, protocol, network, contract, fn, params, response,
               status, duration_ms, created_at
