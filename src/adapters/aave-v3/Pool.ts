@@ -10,7 +10,7 @@ const POOL_ABI = [
     name:            'getUserAccountData',
     type:            'function',
     stateMutability: 'view',
-    inputs:  [{ name: 'user', type: 'address' }],
+    inputs: [{ name: 'user', type: 'address' }],
     outputs: [
       { name: 'totalCollateralBase',         type: 'uint256' },
       { name: 'totalDebtBase',               type: 'uint256' },
@@ -24,7 +24,7 @@ const POOL_ABI = [
     name:            'getReserveData',
     type:            'function',
     stateMutability: 'view',
-    inputs:  [{ name: 'asset', type: 'address' }],
+    inputs: [{ name: 'asset', type: 'address' }],
     outputs: [{
       name: 'reserveData', type: 'tuple',
       components: [

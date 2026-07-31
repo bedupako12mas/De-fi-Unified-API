@@ -1,6 +1,6 @@
 import { BaseAdapter }        from '../base.js'
-import { UniswapV3QuoterV2 } from './QuoterV2.js'
-import { UNISWAP_V3_CONFIG } from './config.js'
+import { UniswapV3QuoterV2 }  from './QuoterV2.js'
+import { UNISWAP_V3_CONFIG }  from './config.js'
 
 export class UniswapV3Adapter extends BaseAdapter {
   constructor() {
