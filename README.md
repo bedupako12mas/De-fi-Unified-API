@@ -276,7 +276,7 @@ npm run build        # emits dist/
 - **DigitalOcean Droplet** — self-managed deployment, no managed cloud services
 - **nginx** — reverse proxy (`:80` -> app on `localhost:3000`, direct port firewalled off)
 - **pm2** — process management and auto-restart
-- **GitHub Actions** — push-to-`main` auto-deploy over SSH, end-to-end verified
+- **GitHub Actions** — push-to-`main` auto-deploy over SSH
 
 ---
 
