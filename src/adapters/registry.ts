@@ -1,9 +1,11 @@
 import { UniswapV3Adapter } from './uniswap-v3/index.js'
+import { AaveV3Adapter }    from './aave-v3/index.js'
 import { ServerError }      from '../errors.js'
 import { BaseAdapter }      from './base.js'
 
 const adapters: Record<string, BaseAdapter> = {
-  'uniswap-v3': new UniswapV3Adapter()
+  'uniswap-v3': new UniswapV3Adapter(),
+  'aave-v3':    new AaveV3Adapter()
 }
 
 export function getAdapter(protocol: string): BaseAdapter {
